@@ -1,8 +1,23 @@
-#include <Arduino.h>
-#include "SPI.h"
-#include <Adafruit_GFX.h>
-#include <ILI9488.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_freertos_hooks.h"
+#include "freertos/semphr.h"
+#include "esp_system.h"
+#include "driver/gpio.h"
+
+#include <lvgl.h>
+#include <lvgl_helpers.h>
+
+/*********************
+ *      DEFINES
+ *********************/
+#define TAG "FanControl"
+#define LV_TICK_PERIOD_MS 1
 #define TFT_CS  5
 #define TFT_DC  2
 #define TFT_MOSI 23
@@ -11,326 +26,132 @@
 #define TFT_RST 27 
 #define TFT_MISO -1 
 
-ILI9488 tft = ILI9488(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST, TFT_MISO);
 
-unsigned long testFillScreen() {
-  unsigned long start = micros();
-  tft.fillScreen(ILI9488_BLACK);
-  tft.fillScreen(ILI9488_RED);
-  tft.fillScreen(ILI9488_GREEN);
-  tft.fillScreen(ILI9488_BLUE);
-  tft.fillScreen(ILI9488_BLACK);
-  return micros() - start;
-}
+/**********************
+ *  STATIC PROTOTYPES
+ **********************/
+static void lv_tick_task(void *arg);
+static void guiTask(void *pvParameter);
 
-unsigned long testText() {
-  tft.fillScreen(ILI9488_BLACK);
-  unsigned long start = micros();
-  tft.setCursor(0, 0);
-  tft.setTextColor(ILI9488_WHITE);  tft.setTextSize(1);
-  tft.println("Hello World!");
-  tft.setTextColor(ILI9488_YELLOW); tft.setTextSize(2);
-  tft.println(1234.56);
-  tft.setTextColor(ILI9488_RED);    tft.setTextSize(3);
-  tft.println(0xDEADBEEF, HEX);
-  tft.println();
-  tft.setTextColor(ILI9488_GREEN);
-  tft.setTextSize(5);
-  tft.println("Groop");
-  tft.setTextSize(2);
-  tft.println("I implore thee,");
-  tft.setTextSize(1);
-  tft.println("my foonting turlingdromes.");
-  tft.println("And hooptiously drangle me");
-  tft.println("with crinkly bindlewurdles,");
-  tft.println("Or I will rend thee");
-  tft.println("in the gobberwarts");
-  tft.println("with my blurglecruncheon,");
-  tft.println("see if I don't!");
-  return micros() - start;
-}
-
-unsigned long testLines(uint16_t color) {
-  unsigned long start, t;
-  int           x1, y1, x2, y2,
-                w = tft.width(),
-                h = tft.height();
-
-  tft.fillScreen(ILI9488_BLACK);
-
-  x1 = y1 = 0;
-  y2    = h - 1;
-  start = micros();
-  for(x2=0; x2<w; x2+=6) tft.drawLine(x1, y1, x2, y2, color);
-  x2    = w - 1;
-  for(y2=0; y2<h; y2+=6) tft.drawLine(x1, y1, x2, y2, color);
-  t     = micros() - start; // fillScreen doesn't count against timing
-
-  tft.fillScreen(ILI9488_BLACK);
-
-  x1    = w - 1;
-  y1    = 0;
-  y2    = h - 1;
-  start = micros();
-  for(x2=0; x2<w; x2+=6) tft.drawLine(x1, y1, x2, y2, color);
-  x2    = 0;
-  for(y2=0; y2<h; y2+=6) tft.drawLine(x1, y1, x2, y2, color);
-  t    += micros() - start;
-
-  tft.fillScreen(ILI9488_BLACK);
-
-  x1    = 0;
-  y1    = h - 1;
-  y2    = 0;
-  start = micros();
-  for(x2=0; x2<w; x2+=6) tft.drawLine(x1, y1, x2, y2, color);
-  x2    = w - 1;
-  for(y2=0; y2<h; y2+=6) tft.drawLine(x1, y1, x2, y2, color);
-  t    += micros() - start;
-
-  tft.fillScreen(ILI9488_BLACK);
-
-  x1    = w - 1;
-  y1    = h - 1;
-  y2    = 0;
-  start = micros();
-  for(x2=0; x2<w; x2+=6) tft.drawLine(x1, y1, x2, y2, color);
-  x2    = 0;
-  for(y2=0; y2<h; y2+=6) tft.drawLine(x1, y1, x2, y2, color);
-
-  return micros() - start;
-}
-
-unsigned long testFastLines(uint16_t color1, uint16_t color2) {
-  unsigned long start;
-  int           x, y, w = tft.width(), h = tft.height();
-
-  tft.fillScreen(ILI9488_BLACK);
-  start = micros();
-  for(y=0; y<h; y+=5) tft.drawFastHLine(0, y, w, color1);
-  for(x=0; x<w; x+=5) tft.drawFastVLine(x, 0, h, color2);
-
-  return micros() - start;
-}
-
-unsigned long testRects(uint16_t color) {
-  unsigned long start;
-  int           n, i, i2,
-                cx = tft.width()  / 2,
-                cy = tft.height() / 2;
-
-  tft.fillScreen(ILI9488_BLACK);
-  n     = min(tft.width(), tft.height());
-  start = micros();
-  for(i=2; i<n; i+=6) {
-    i2 = i / 2;
-    tft.drawRect(cx-i2, cy-i2, i, i, color);
-  }
-
-  return micros() - start;
-}
-
-unsigned long testFilledRects(uint16_t color1, uint16_t color2) {
-  unsigned long start, t = 0;
-  int           n, i, i2,
-                cx = tft.width()  / 2 - 1,
-                cy = tft.height() / 2 - 1;
-
-  tft.fillScreen(ILI9488_BLACK);
-  n = min(tft.width(), tft.height());
-  for(i=n; i>0; i-=6) {
-    i2    = i / 2;
-    start = micros();
-    tft.fillRect(cx-i2, cy-i2, i, i, color1);
-    t    += micros() - start;
-    // Outlines are not included in timing results
-    tft.drawRect(cx-i2, cy-i2, i, i, color2);
-  }
-
-  return t;
-}
-
-unsigned long testFilledCircles(uint8_t radius, uint16_t color) {
-  unsigned long start;
-  int x, y, w = tft.width(), h = tft.height(), r2 = radius * 2;
-
-  tft.fillScreen(ILI9488_BLACK);
-  start = micros();
-  for(x=radius; x<w; x+=r2) {
-    for(y=radius; y<h; y+=r2) {
-      tft.fillCircle(x, y, radius, color);
+static void event_handler(lv_obj_t * obj, lv_event_t event)
+{
+    if(event == LV_EVENT_CLICKED) {
+        printf("Clicked\n");
     }
-  }
-
-  return micros() - start;
-}
-
-unsigned long testCircles(uint8_t radius, uint16_t color) {
-  unsigned long start;
-  int           x, y, r2 = radius * 2,
-                w = tft.width()  + radius,
-                h = tft.height() + radius;
-
-  // Screen is not cleared for this one -- this is
-  // intentional and does not affect the reported time.
-  start = micros();
-  for(x=0; x<w; x+=r2) {
-    for(y=0; y<h; y+=r2) {
-      tft.drawCircle(x, y, radius, color);
+    else if(event == LV_EVENT_VALUE_CHANGED) {
+        printf("Toggled\n");
     }
-  }
-
-  return micros() - start;
 }
 
-unsigned long testTriangles() {
-  unsigned long start;
-  int           n, i, cx = tft.width()  / 2 - 1,
-                      cy = tft.height() / 2 - 1;
+void lv_ex_btn_1(void)
+{
+    lv_obj_t * label;
 
-  tft.fillScreen(ILI9488_BLACK);
-  n     = min(cx, cy);
-  start = micros();
-  for(i=0; i<n; i+=5) {
-    tft.drawTriangle(
-      cx    , cy - i, // peak
-      cx - i, cy + i, // bottom left
-      cx + i, cy + i, // bottom right
-      tft.color565(0, 0, i));
-  }
+    lv_obj_t * btn1 = lv_btn_create(lv_scr_act(), NULL);
+    lv_obj_set_event_cb(btn1, event_handler);
+    lv_obj_align(btn1, NULL, LV_ALIGN_CENTER, 0, -40);
 
-  return micros() - start;
+    label = lv_label_create(btn1, NULL);
+    lv_label_set_text(label, "Button");
+
+    lv_obj_t * btn2 = lv_btn_create(lv_scr_act(), NULL);
+    lv_obj_set_event_cb(btn2, event_handler);
+    lv_obj_align(btn2, NULL, LV_ALIGN_CENTER, 0, 40);
+    lv_btn_set_checkable(btn2, true);
+    lv_btn_toggle(btn2);
+    lv_btn_set_fit2(btn2, LV_FIT_NONE, LV_FIT_TIGHT);
+
+    label = lv_label_create(btn2, NULL);
+    lv_label_set_text(label, "Toggled");
 }
 
-unsigned long testFilledTriangles() {
-  unsigned long start, t = 0;
-  int           i, cx = tft.width()  / 2 - 1,
-                   cy = tft.height() / 2 - 1;
+/**********************
+ *   APPLICATION MAIN
+ **********************/
+extern "C" void app_main() {
 
-  tft.fillScreen(ILI9488_BLACK);
-  start = micros();
-  for(i=min(cx,cy); i>10; i-=5) {
-    start = micros();
-    tft.fillTriangle(cx, cy - i, cx - i, cy + i, cx + i, cy + i,
-      tft.color565(0, i, i));
-    t += micros() - start;
-    tft.drawTriangle(cx, cy - i, cx - i, cy + i, cx + i, cy + i,
-      tft.color565(i, i, 0));
-  }
-
-  return t;
+    /* If you want to use a task to create the graphic, you NEED to create a Pinned task
+     * Otherwise there can be problem such as memory corruption and so on.
+     * NOTE: When not using Wi-Fi nor Bluetooth you can pin the guiTask to core 0 */
+    xTaskCreatePinnedToCore(guiTask, "gui", 4096*2, NULL, 0, NULL, 0);
 }
 
-unsigned long testRoundRects() {
-  unsigned long start;
-  int           w, i, i2,
-                cx = tft.width()  / 2 - 1,
-                cy = tft.height() / 2 - 1;
+/* Creates a semaphore to handle concurrent call to lvgl stuff
+ * If you wish to call *any* lvgl function from other threads/tasks
+ * you should lock on the very same semaphore! */
+SemaphoreHandle_t xGuiSemaphore;
 
-  tft.fillScreen(ILI9488_BLACK);
-  w     = min(tft.width(), tft.height());
-  start = micros();
-  for(i=0; i<w; i+=6) {
-    i2 = i / 2;
-    tft.drawRoundRect(cx-i2, cy-i2, i, i, i/8, tft.color565(i, 0, 0));
-  }
+static void guiTask(void *pvParameter) {
 
-  return micros() - start;
+    (void) pvParameter;
+    xGuiSemaphore = xSemaphoreCreateMutex();
+
+    lv_init();
+
+    /* Initialize SPI or I2C bus used by the drivers */
+    lvgl_driver_init();
+
+    lv_color_t* buf1 = (lv_color_t*)heap_caps_malloc(DISP_BUF_SIZE * sizeof(lv_color_t), MALLOC_CAP_DMA);
+    assert(buf1 != NULL);
+
+    /* Use double buffering */
+    lv_color_t* buf2 = (lv_color_t*)heap_caps_malloc(DISP_BUF_SIZE * sizeof(lv_color_t), MALLOC_CAP_DMA);
+    assert(buf2 != NULL);
+
+    static lv_disp_buf_t disp_buf;
+
+    uint32_t size_in_px = DISP_BUF_SIZE;
+
+    /* Initialize the working buffer depending on the selected display.
+     * NOTE: buf2 == NULL when using monochrome displays. */
+    lv_disp_buf_init(&disp_buf, buf1, buf2, size_in_px);
+
+    lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.flush_cb = disp_driver_flush;
+
+    disp_drv.buffer = &disp_buf;
+    lv_disp_drv_register(&disp_drv);
+
+    /* Register an input device*/
+    lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.read_cb = touch_driver_read;
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    lv_indev_drv_register(&indev_drv);
+
+    /* Create and start a periodic timer interrupt to call lv_tick_inc */
+    const esp_timer_create_args_t periodic_timer_args = {
+        .callback = &lv_tick_task,
+        .name = "periodic_gui"
+    };
+    
+    esp_timer_handle_t periodic_timer;
+    ESP_ERROR_CHECK(esp_timer_create(&periodic_timer_args, &periodic_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(periodic_timer, LV_TICK_PERIOD_MS * 1000));
+
+    /* Create the application */
+    lv_ex_btn_1();
+
+    while (1) {
+        /* Delay 1 tick (assumes FreeRTOS tick is 10ms */
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+        /* Try to take the semaphore, call lvgl related function on success */
+        if (pdTRUE == xSemaphoreTake(xGuiSemaphore, portMAX_DELAY)) {
+            lv_task_handler();
+            xSemaphoreGive(xGuiSemaphore);
+       }
+    }
+
+    /* A task should NEVER return */
+    free(buf1);
+    free(buf2);
+    vTaskDelete(NULL);
 }
 
-unsigned long testFilledRoundRects() {
-  unsigned long start;
-  int           i, i2,
-                cx = tft.width()  / 2 - 1,
-                cy = tft.height() / 2 - 1;
+static void lv_tick_task(void *arg) {
+    (void) arg;
 
-  tft.fillScreen(ILI9488_BLACK);
-  start = micros();
-  for(i=min(tft.width(), tft.height()); i>20; i-=6) {
-    i2 = i / 2;
-    tft.fillRoundRect(cx-i2, cy-i2, i, i, i/8, tft.color565(0, i, 0));
-  }
-
-  return micros() - start;
+    lv_tick_inc(LV_TICK_PERIOD_MS);
 }
-
-void setup() {
-  Serial.begin(115200);
-  Serial.println("ILI9488 Test!");
-
-  tft.begin();
-
-  // read diagnostics (optional but can help debug problems)
-  uint8_t x = tft.readcommand8(ILI9488_RDMODE);
-  Serial.print("Display Power Mode: 0x"); Serial.println(x, HEX);
-  x = tft.readcommand8(ILI9488_RDMADCTL);
-  Serial.print("MADCTL Mode: 0x"); Serial.println(x, HEX);
-  x = tft.readcommand8(ILI9488_RDPIXFMT);
-  Serial.print("Pixel Format: 0x"); Serial.println(x, HEX);
-  x = tft.readcommand8(ILI9488_RDIMGFMT);
-  Serial.print("Image Format: 0x"); Serial.println(x, HEX);
-  x = tft.readcommand8(ILI9488_RDSELFDIAG);
-  Serial.print("Self Diagnostic: 0x"); Serial.println(x, HEX);
-
-  Serial.println(F("Benchmark                Time (microseconds)"));
-
-  Serial.print(F("Screen fill              "));
-  Serial.println(testFillScreen());
-  delay(500);
-
-  Serial.print(F("Text                     "));
-  Serial.println(testText());
-  delay(3000);
-
-  Serial.print(F("Lines                    "));
-  Serial.println(testLines(ILI9488_CYAN));
-  delay(500);
-
-  Serial.print(F("Horiz/Vert Lines         "));
-  Serial.println(testFastLines(ILI9488_RED, ILI9488_BLUE));
-  delay(500);
-
-  Serial.print(F("Rectangles (outline)     "));
-  Serial.println(testRects(ILI9488_GREEN));
-  delay(500);
-
-  Serial.print(F("Rectangles (filled)      "));
-  Serial.println(testFilledRects(ILI9488_YELLOW, ILI9488_MAGENTA));
-  delay(500);
-
-  Serial.print(F("Circles (filled)         "));
-  Serial.println(testFilledCircles(10, ILI9488_MAGENTA));
-
-  Serial.print(F("Circles (outline)        "));
-  Serial.println(testCircles(10, ILI9488_WHITE));
-  delay(500);
-
-  Serial.print(F("Triangles (outline)      "));
-  Serial.println(testTriangles());
-  delay(500);
-
-  Serial.print(F("Triangles (filled)       "));
-  Serial.println(testFilledTriangles());
-  delay(500);
-
-  Serial.print(F("Rounded rects (outline)  "));
-  Serial.println(testRoundRects());
-  delay(500);
-
-  Serial.print(F("Rounded rects (filled)   "));
-  Serial.println(testFilledRoundRects());
-  delay(500);
-
-  Serial.println(F("Done!"));
-
-}
-
-
-void loop(void) {
-  for(uint8_t rotation=0; rotation<4; rotation++) {
-    tft.setRotation(rotation);
-    testText();
-    delay(1000);
-  }
-}
-
